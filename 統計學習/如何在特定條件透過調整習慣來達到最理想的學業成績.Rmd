@@ -1,0 +1,385 @@
+---
+output:
+  pdf_document:
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{xcolor}
+---
+
+\centering
+# Student Habit Performance
+\raggedright
+# 1. EDA
+
+```{r}
+df = read.csv("C:\\Users\\E2546\\OneDrive\\Desktop\\課業\\大二上\\統計學習\\期末報告_學生習慣與學業表現\\student_habits_performance.csv")
+
+df$total_screen_time <- df$netflix_hours + df$social_media_hours
+
+summary(df)
+```
+## (a) Numeric data
+```{r}
+library(dplyr)
+
+numeric_df <- df %>% 
+  select(where(is.numeric))
+
+head(numeric_df)
+```
+### Heat map
+```{r}
+install.packages("corrplot", repos = "https://cloud.r-project.org")
+library(corrplot)
+```
+```{r}
+# 1. 計算所有變數與 exam_score 的相關係數
+cor_matrix <- cor(numeric_df, use = "complete.obs")
+target_cor <- cor_matrix[, "exam_score"]
+
+# 2. 移除 exam_score 自己 (因為相關係數是 1，沒有比較意義)
+target_cor <- target_cor[names(target_cor) != "exam_score"]
+
+# 3. 排序 (由大到小)
+target_cor <- sort(target_cor, decreasing = TRUE)
+
+print(target_cor)
+
+par(mar = c(10, 5, 4, 2)) 
+
+barplot(target_cor, 
+        las = 2, 
+        main = "Correlation with Exam Score",
+        ylab = "Correlation Coefficient",
+        col = ifelse(target_cor > 0, "lightcoral", "lightblue"),
+        ylim = c(-1, 1)) # 固定 Y 軸範圍
+```
+### pair
+```{r}
+numeric_vars <- names(df)[sapply(df, is.numeric)]
+
+x_vars <- setdiff(numeric_vars, "exam_score")
+
+par(mfrow = c(3, 3), mar = c(4, 4, 2, 1)) 
+
+for (var in x_vars) {
+  
+  plot(x = df[[var]], 
+       y = df$exam_score,
+       main = paste("Exam Score vs", var), #標題
+       xlab = var,                         # X軸名稱
+       ylab = "Exam Score",                # Y軸名稱
+       pch = 19,                           # 點的形狀 (實心圓)
+       col = rgb(0, 0, 1, 0.3))            # 藍色帶有 30% 透明度 (避免點重疊看不清)
+  
+  abline(lm(df$exam_score ~ df[[var]]), col = "red", lwd = 2)
+}
+
+par(mfrow = c(1, 1))
+```
+## (b) Category data:ANOVA
+```{r}
+cat_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
+
+cat_cols <- setdiff(cat_cols, "student_id")
+
+anova_summary <- data.frame(
+  Variable = character(), 
+  P_Value = numeric(), 
+  Significant = character(), 
+  stringsAsFactors = FALSE
+)
+
+for (var in cat_cols) {
+  
+  formula_str <- as.formula(paste("exam_score ~", var))
+  
+  model <- aov(formula_str, data = df)
+  
+  p_val <- summary(model)[[1]][["Pr(>F)"]][1]
+  
+  anova_summary[nrow(anova_summary) + 1, ] <- list(
+    Variable = var,
+    P_Value = round(p_val, 5),  # 取小數點後 5 位
+    Significant = ifelse(p_val < 0.05, "Yes (*)", "No") 
+  )
+}
+
+anova_summary <- anova_summary[order(anova_summary$P_Value), ]
+
+print(anova_summary)
+```
+
+```{r}
+# ==============================================================================
+# Master Analysis Script: Student Habits & Academic Performance
+# 整合來源：EDA, Linear Models, Nonlinear Models, Optimization
+# 架構：
+# 1. Setup & Data Preprocessing
+# 2. EDA (Exploratory Data Analysis)
+# 3. Model Comparison (StepAIC, Lasso, Ridge, RF - 100 Iterations)
+# 4. Nonlinear Analysis (NLS Saturation Model)
+# 5. Optimization (Linear Programming)
+# ==============================================================================
+
+# === 1. Setup & Data Preprocessing ===
+
+# 自動安裝並載入必要套件
+# 移除 pROC，因為移除分類模型後不再需要
+packages <- c("tidyverse", "skimr", "corrplot", "caret", "glmnet", 
+              "randomForest", "MASS", "lpSolve", "naniar")
+new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages)
+
+library(tidyverse)
+library(skimr)
+library(corrplot)
+library(caret)
+library(glmnet)
+library(randomForest)
+library(MASS)
+library(lpSolve)
+
+# 讀取資料 (請修改此處路徑)
+# df <- read.csv("C:/Users/AngusLu/Desktop/student_habits_performance.csv") 
+# 為方便執行，預設讀取當前目錄，請確保檔案在工作目錄中或修改路徑
+df <- read.csv("student_habits_performance.csv")
+
+# 資料清理與型態轉換
+df_clean <- df %>%
+  dplyr::select(-student_id) %>% # 移除 ID
+  mutate(across(where(is.character), as.factor)) # 字串轉因子
+
+# 檢查缺失值
+cat("=== Missing Values Summary ===\n")
+print(sum(is.na(df_clean)))
+
+# ==============================================================================
+# === 2. EDA (Exploratory Data Analysis) ===
+# ==============================================================================
+
+cat("\n=== 2. EDA Started ===\n")
+
+# 2.1 目標變數分佈
+ggplot(df_clean, aes(x = exam_score)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(aes(y = ..count.. * 2), color = "red") + # 簡易疊加密度
+  labs(title = "Distribution of Exam Scores") +
+  theme_minimal()
+
+# 2.2 相關係數矩陣 (數值變數)
+# 修正: 強制使用 dplyr::select 以避免與 MASS::select 衝突
+numeric_vars <- df_clean %>% dplyr::select(where(is.numeric))
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, addCoef.col = "black",
+         title = "Correlation Matrix", mar = c(0,0,1,0))
+
+# 2.3 關鍵非線性關係探索 (Study Hours vs Score)
+ggplot(df_clean, aes(x = study_hours_per_day, y = exam_score)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", color = "blue", se = TRUE) +
+  labs(title = "Nonlinear Relationship: Study Hours vs Exam Score",
+       subtitle = "Blue line indicates LOESS smoothing (Diminishing Returns)") +
+  theme_minimal()
+
+# ==============================================================================
+# === 3. Model Comparison (Regression) ===
+# ==============================================================================
+# 透過 100 次隨機抽樣，比較 StepAIC, Lasso, Ridge, Random Forest 的穩定性
+
+cat("\n=== 3. Model Comparison (100 Iterations) ===\n")
+
+# 定義 R2 計算函數
+calc_r2 <- function(actual, predicted) {
+  sse <- sum((actual - predicted)^2)
+  sst <- sum((actual - mean(actual))^2)
+  return(1 - (sse / sst))
+}
+
+results_log <- data.frame()
+stored_best_model_obj <- NULL # 用於儲存最後一次的最佳模型物件
+
+n_iterations <- 100 # 設定迭代次數
+pb <- txtProgressBar(min = 0, max = n_iterations, style = 3)
+
+
+for (i in 1:n_iterations) {
+  # 80/20 切分
+  train_idx <- createDataPartition(df_clean$exam_score, p = 0.8, list = FALSE)
+  train_data <- df_clean[train_idx, ]
+  test_data  <- df_clean[-train_idx, ]
+  
+  # 準備矩陣格式 (for GLMNET)
+  x_train <- model.matrix(exam_score ~ ., data = train_data)[, -1]
+  y_train <- train_data$exam_score
+  x_test  <- model.matrix(exam_score ~ ., data = test_data)[, -1]
+  y_test  <- test_data$exam_score
+  
+  # --- Model A: StepAIC ---
+  full_mod <- lm(exam_score ~ ., data = train_data)
+  step_mod <- stepAIC(full_mod, direction = "both", trace = FALSE)
+  step_pred <- predict(step_mod, test_data)
+  step_rmse <- sqrt(mean((test_data$exam_score - step_pred)^2))
+  step_r2   <- calc_r2(test_data$exam_score, step_pred)
+  
+  # --- Model B: Lasso ---
+  cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
+  lasso_pred <- predict(cv_lasso, s = "lambda.min", newx = x_test)
+  lasso_rmse <- sqrt(mean((y_test - lasso_pred)^2))
+  lasso_r2   <- calc_r2(y_test, lasso_pred)
+  
+  # --- Model C: Ridge ---
+  cv_ridge <- cv.glmnet(x_train, y_train, alpha = 0)
+  ridge_pred <- predict(cv_ridge, s = "lambda.min", newx = x_test)
+  ridge_rmse <- sqrt(mean((y_test - ridge_pred)^2))
+  ridge_r2   <- calc_r2(y_test, ridge_pred)
+  
+  # --- Model D: Random Forest ---
+  rf_mod <- randomForest(exam_score ~ ., data = train_data, ntree = 100) # 加快速度設為100
+  rf_pred <- predict(rf_mod, test_data)
+  rf_rmse <- sqrt(mean((test_data$exam_score - rf_pred)^2))
+  rf_r2   <- calc_r2(test_data$exam_score, rf_pred)
+  
+  # 紀錄結果
+  results_log <- rbind(results_log, 
+                       data.frame(Iter=i, Model="StepAIC", RMSE=step_rmse, R2=step_r2),
+                       data.frame(Iter=i, Model="Lasso", RMSE=lasso_rmse, R2=lasso_r2),
+                       data.frame(Iter=i, Model="Ridge", RMSE=ridge_rmse, R2=ridge_r2),
+                       data.frame(Iter=i, Model="RandomForest", RMSE=rf_rmse, R2=rf_r2))
+  
+  # 暫存最後一次的 StepAIC 模型供後續 Optimization 使用 (假設 StepAIC 表現不錯)
+  if (i == n_iterations) stored_best_model_obj <- step_mod
+  
+  setTxtProgressBar(pb, i)
+}
+close(pb)
+
+# 彙整與排名
+summary_stats <- results_log %>%
+  group_by(Model) %>%
+  summarise(Mean_RMSE = mean(RMSE), Mean_R2 = mean(R2)) %>%
+  arrange(Mean_RMSE)
+
+print(summary_stats)
+
+# ==============================================================================
+# === 4. Nonlinear Analysis (NLS Saturation Model) ===
+# ==============================================================================
+# 驗證學習時間的邊際效益遞減
+
+cat("\n=== 4. Nonlinear Analysis (NLS) ===\n")
+
+# 定義飽和模型: Score = a * (1 - exp(-b * StudyTime))
+tryCatch({
+  nls_fit <- nls(
+    exam_score ~ a * (1 - exp(-b * study_hours_per_day)),
+    data = df_clean,
+    start = list(a = 100, b = 0.5)
+  )
+  
+  print(summary(nls_fit))
+  
+  # 繪圖
+  plot(df_clean$study_hours_per_day, df_clean$exam_score, 
+       main = "NLS Saturation Model Fit", xlab="Study Hours", ylab="Exam Score",
+       col = gray(0.5, 0.5), pch=19)
+  lines(df_clean$study_hours_per_day, predict(nls_fit), col = "red", lwd = 2)
+  
+}, error = function(e) {
+  cat("NLS 模型收斂失敗，請檢查初始值或數據分佈。\n")
+})
+
+# ==============================================================================
+# === 5. Optimization (Linear Programming) ===
+# ==============================================================================
+# 基於 StepAIC 線性模型的係數，計算最佳作息時間
+
+cat("\n=== 5. Optimization (Linear Programming) ===\n")
+
+# 提取係數 (使用我們儲存的 stored_best_model_obj)
+final_coefs <- coef(stored_best_model_obj)
+intercept <- final_coefs["(Intercept)"]
+
+# 目標變數順序 (lpSolve 需要嚴格對齊)
+target_vars <- c("study_hours_per_day", "social_media_hours", "netflix_hours", 
+                 "attendance_percentage", "sleep_hours", "exercise_frequency", 
+                 "mental_health_rating")
+
+# 建立係數向量 (若變數被 StepAIC 剔除則補 0)
+obj_coeffs <- numeric(length(target_vars))
+names(obj_coeffs) <- target_vars
+
+for(v in target_vars) {
+  if(v %in% names(final_coefs)) {
+    obj_coeffs[v] <- final_coefs[v]
+  } else {
+    obj_coeffs[v] <- 0
+  }
+}
+
+# 1:Study, 2:Social, 3:Netflix, 4:Attendance, 5:Sleep, 6:Exercise, 7:Mental
+# 限制式矩陣
+con_matrix <- matrix(c(
+  # 1. 總時間限制 < 20 (需考慮 attendance 與 exercise 的時間換算)
+  # 假設: Attendance% 換算時間係數 ~ 18/700, Exercise Freq ~ 2/21
+  1, 1, 1, (18/700), 1, (2/21), 0,
+  
+  # 2. Study Bounds (0 ~ 8.3)
+  1, 0, 0, 0, 0, 0, 0,
+  1, 0, 0, 0, 0, 0, 0,
+  
+  # 3. Social Media Bounds (6 ~ 7.2) - 依據 Paper 設定的嚴格限制
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  
+  # 4. Sleep Bounds (6~ 10)
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  
+  # 5. Netflix Fixed (= 2)
+  0, 0, 1, 0, 0, 0, 0,
+  
+  # 6. Exercise Bounds (0 ~ 6)
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  
+  # 7. Attendance Fixed (= 60)
+  0, 0, 0, 1, 0, 0, 0,
+  
+  # 8. Mental Health Fixed (= 8)
+  0, 0, 0, 0, 0, 0, 1
+), ncol = 7, byrow = TRUE)
+
+# 限制式方向與數值
+con_dir <- c("<", "<", ">", "<", ">", "<", ">", "=", "<", ">", "=", "=")
+con_rhs <- c(20, 8.3, 0, 7.2, 6, 10, 6, 2, 6, 0, 60, 8)
+
+# 求解
+opt_result <- lp("max", obj_coeffs, con_matrix, con_dir, con_rhs)
+
+# 輸出結果
+cat("\n=== Optimal Schedule ===\n")
+optimal_df <- data.frame(
+  Variable = target_vars,
+  Optimal_Value = round(opt_result$solution, 2),
+  Coefficient = round(obj_coeffs, 4)
+)
+print(optimal_df)
+
+predicted_score <- opt_result$objval + intercept
+cat("\nPredicted Maximum Score:", round(predicted_score, 2), "\n")
+```
+
+
+
+
+
+
+
+
+
+
+
+
