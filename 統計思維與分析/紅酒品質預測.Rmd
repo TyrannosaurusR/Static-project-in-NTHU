@@ -1,0 +1,339 @@
+---
+title: "紅酒"
+author: "TPicture"
+date: "2025-05-31"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+Redwine_data = read.csv("C:\\Users\\E2546\\OneDrive\\Desktop\\課業\\大一下\\統計思維與分析\\RedWineQuality\\winequality-red.csv")
+Redwine_data
+```
+
+```{r}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+install.packages("ggplot2")
+install.packages("reshape2")
+```
+```{r}
+# 安裝並載入必要套件
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# 轉換 quality 為 factor
+wine_data$quality <- as.factor(wine_data$quality)
+
+# 長格式轉換
+wine_long <- wine_data %>%
+  pivot_longer(
+    cols = -quality,
+    names_to = "variable",
+    values_to = "value"
+  )
+
+# 畫大圖（可調整高度和寬度）
+plot <- ggplot(wine_long, aes(x = value, fill = quality)) +
+  geom_density(alpha = 0.6) +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  theme_minimal(base_size = 16) +
+  labs(title = "Stacked Density Plots of Features by Quality",
+       x = "Value", y = "Density")
+
+# 儲存圖檔為高解析圖片
+ggsave("stacked_density_plot.png", plot, width = 16, height = 10, dpi = 300)
+
+
+
+```
+
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# 計算整體相關係數矩陣
+cor_matrix <- cor(Redwine_data, use = "complete.obs")
+
+# 擷取 quality 那一列
+quality_cor <- cor_matrix[, "quality", drop = FALSE]
+
+# melt 成適合 ggplot 的格式
+cor_df <- melt(quality_cor, varnames = "Feature", value.name = "Correlation")
+
+# 畫 heatmap 並在每格上標出數值
+ggplot(cor_df, aes(x = Feature, y = 1, fill = Correlation)) +
+  geom_tile() +
+  geom_text(aes(label = round(Correlation, 2)), color = "black", size = 5) +  # 加上文字標示
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1,1), space = "Lab",
+                       name = "相關係數") +
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("每個特徵與 wine quality 的相關係數熱力圖")
+
+
+```
+
+```{r}
+quality_cor <- cor(Redwine_data)[, "quality"]
+quality_cor
+```
+# 分群囉
+```{r}
+library(MASS)
+
+stability_selection <- function(data, B = 100, sample_ratio = 0.7) {
+  predictors <- setdiff(colnames(data), c("quality"))
+  formula <- as.formula(paste("quality ~ (", paste(predictors, collapse = " + "), ")^2"))
+  
+  var_counts <- list()
+  
+  for (i in 1:B) {
+    sample_index <- sample(1:nrow(data), size = floor(nrow(data) * sample_ratio), replace = FALSE)
+    sample_data <- data[sample_index, ]
+    
+    fit <- tryCatch({
+      lm(formula, data = sample_data)
+    }, error = function(e) NULL)
+    
+    if (!is.null(fit)) {
+      step_model <- tryCatch({
+        stepAIC(fit, direction = "back", trace = FALSE)
+      }, error = function(e) NULL)
+      
+      if (!is.null(step_model)) {
+        vars <- names(coef(step_model))[-1]  # remove intercept
+        for (v in vars) {
+          if (is.null(var_counts[[v]])) {
+            var_counts[[v]] <- 1L
+          } else {
+            var_counts[[v]] <- var_counts[[v]] + 1L
+          }
+        }
+      }
+    }
+  }
+  
+  return(sort(unlist(var_counts), decreasing = TRUE))
+}
+
+wine_stability <- stability_selection(Redwine_data, B = 100)
+cat("重要特徵出現次數：\n")
+print(wine_stability)
+```
+### 無聊喜資料
+```{r}
+Redwine_data_clean <- Redwine_data
+
+features <- setdiff(names(Redwine_data), "quality")
+
+for (feature in features) {
+  col_mean <- mean(Redwine_data_clean[[feature]], na.rm = TRUE)
+  col_sd <- sd(Redwine_data_clean[[feature]], na.rm = TRUE)
+  lower <- col_mean - 2 * col_sd
+  upper <- col_mean + 2 * col_sd
+  
+  # 只保留落在區間內的列
+  Redwine_data_clean <- Redwine_data_clean[
+    Redwine_data_clean[[feature]] >= lower & Redwine_data_clean[[feature]] <= upper, 
+  ]
+}
+
+```
+
+
+### 最佳解
+```{r}
+rmse_array = numeric(1000)
+accuracy_array <- numeric(1000)
+n <- nrow(Redwine_data)
+for(i in 1:3000){
+  train_index <- sample(1:n, size = floor(0.98 * n))
+  train_data <- Redwine_data[train_index, ]
+  test_data <- Redwine_data[-train_index, ]
+  formula_text <- paste("quality ~", paste(names(wine_stability[wine_stability > 67]), collapse = " + "))
+  formula <- as.formula(formula_text)
+  ft_model = lm(formula, data = train_data)
+
+  pred <- predict(ft_model, newdata = test_data)
+  rmse <- sqrt(mean((test_data$quality - pred)^2, na.rm = TRUE))
+  rmse_array[i] = rmse
+  
+  rounded_pred <- round(pred - 0)
+  correct_count <- sum(rounded_pred == test_data$quality, na.rm = TRUE)
+  accuracy <- correct_count / length(rounded_pred)
+  accuracy_array[i] <- accuracy
+}
+cat("Median RMSE 為：", round(median(rmse_array), 3), "\n")
+cat("Mean RMSE 為：", round(mean(rmse_array), 3), "\n")
+cat("平均準確度為：", round(mean(accuracy_array) * 100, 2), "%\n")
+```
+
+
+### 洗資料的最佳解
+```{r}
+rmse_array = numeric(3000)
+accuracy_array <- numeric(3000)
+classification_accuracy_array<- logical(3000)
+n <- nrow(Redwine_data_clean)
+for(i in 1:3000){
+  train_index <- sample(1:n, size = floor(0.98 * n))
+  train_data <- Redwine_data_clean[train_index, ]
+  test_data <- Redwine_data_clean[-train_index, ]
+  formula_text <- paste("quality ~", paste(names(wine_stability[wine_stability > 67]), collapse = " + "))
+  formula <- as.formula(formula_text)
+  ft_model = lm(formula, data = train_data)
+
+  pred <- predict(ft_model, newdata = test_data)
+  rmse <- sqrt(mean((test_data$quality - pred)^2, na.rm = TRUE))
+  rmse_array[i] = rmse
+
+  correct_count <- sum(round(pred - 0.2) == test_data$quality | round(pred + 0.2) == test_data$quality, na.rm = TRUE)
+  
+  # 計算分類正確率（%）
+  pred_class <- ifelse(pred > 0.65, "high", "low")
+  true_class <- ifelse(test_data$quality > 0.65, "high", "low")
+  correct_flags <- pred_class == true_class
+  classification_accuracy_array[i] <- mean(correct_flags, na.rm = TRUE)
+
+  accuracy <- correct_count / length(rounded_pred)
+  accuracy_array[i] <- accuracy
+}
+cat("Median RMSE 為：", round(median(rmse_array), 3), "\n")
+cat("Mean RMSE 為：", round(mean(rmse_array), 3), "\n")
+cat("平均準確度為：", round(mean(accuracy_array) * 100, 2), "%\n")
+cat("平均分類正確率為：", round(mean(classification_accuracy_array) * 100, 2), "%\n")
+```
+### 不要理這個
+```{r}
+if(FALSE){
+  rmse_array = numeric(1000)
+  accuracy_array <- numeric(1000)
+  
+  for(i in 1:1000){
+    train_index <- sample(1:n, size = floor(0.95 * n))
+    train_data <- Redwine_data[train_index, ]
+    test_data <- Redwine_data[-train_index, ]
+    ft_model = lm(formula = quality ~ fixed.acidity + sqrt(fixed.acidity) + 
+        volatile.acidity + I(volatile.acidity^2) + log(volatile.acidity) + 
+        sqrt(volatile.acidity) + citric.acid + log(chlorides) + 
+        I(free.sulfur.dioxide^2) + sqrt(free.sulfur.dioxide) + total.sulfur.dioxide + 
+        density + log(density) + pH + sulphates + I(sulphates^2) + 
+        sqrt(sulphates) + alcohol + I(alcohol^2) + log(alcohol) + 
+        sqrt(alcohol) + residual.sugar + 
+        sqrt(residual.sugar), data = train_data)
+  
+    pred <- predict(ft_model, newdata = test_data)
+    rmse <- sqrt(mean((test_data$quality - pred)^2, na.rm = TRUE))
+    rmse_array[i] = rmse
+    
+    rounded_pred <- round(pred - 0.15)
+    correct_count <- sum(rounded_pred == test_data$quality, na.rm = TRUE)
+    accuracy <- correct_count / length(rounded_pred)
+    accuracy_array[i] <- accuracy
+  }
+  cat("Median RMSE 為：", round(median(rmse_array), 3), "\n")
+  cat("Mean RMSE 為：", round(mean(rmse_array), 3), "\n")
+  cat("平均準確度為：", round(mean(accuracy_array) * 100, 2), "%\n")
+}
+
+```
+
+#### 統計檢定
+```{r}
+plot(ft_model)
+summary(ft_model)
+anova(ft_model)
+```
+
+
+
+### 不要理這個
+```{r}
+if(FALSE){
+  n <- nrow(Redwine_data)
+  all_vars <- names(wine_stability)
+  
+  make_terms <- function(data, var_list) {
+    terms <- c()
+    for (v in var_list) {
+      if (v %in% names(data)) {
+        terms <- c(terms, v)
+        terms <- c(terms, paste0("I(", v, "^2)"))
+        if (all(data[[v]] > 0, na.rm = TRUE)) {
+          terms <- c(terms, paste0("log(", v, ")"), paste0("sqrt(", v, ")"))
+        }
+      }
+    }
+    return(terms)
+  }
+  
+  results <- data.frame(n_vars = 5:length(all_vars), mean_rmse = NA)
+  
+  for (k in 5:length(all_vars)) {
+    current_vars <- all_vars[1:k]
+    rmse_array <- numeric(5)
+  
+    for (i in 1:5) {
+      train_index <- sample(1:n, size = floor(0.95 * n))
+      train_data <- Redwine_data[train_index, ]
+      test_data <- Redwine_data[-train_index, ]
+  
+      terms <- make_terms(train_data, current_vars)
+      formula_text <- paste("quality ~", paste(terms, collapse = " + "))
+      formula <- as.formula(formula_text)
+  
+      ft_model_trans <- lm(formula, data = train_data)
+      step_model <- stepAIC(ft_model_trans, direction = "both", trace = FALSE)
+  
+      pred <- predict(step_model, newdata = test_data)
+      rmse_array[i] <- sqrt(mean((test_data$quality - pred)^2, na.rm = TRUE))
+    }
+  
+    results$mean_rmse[k - 4] <- mean(rmse_array, na.rm = TRUE)
+  }
+  
+  # 找出最好的 n_vars
+  best <- results[which.min(results$mean_rmse), ]
+  cat("✅ 最佳變數數量為：", best$n_vars, "，對應的 mean RMSE 為：", round(best$mean_rmse, 3), "\n")
+  
+  # 畫圖
+  library(ggplot2)
+  ggplot(results, aes(x = n_vars, y = mean_rmse)) +
+    geom_line() +
+    geom_point() +
+    ggtitle("使用前 n 個最佳變數（含轉換 + stepAIC）時的平均 RMSE") +
+    xlab("使用變數數量 (前 n 個)") +
+    ylab("Mean RMSE")
+  plot(step_model)
+  summary(step_model)
+  anova(step_model)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

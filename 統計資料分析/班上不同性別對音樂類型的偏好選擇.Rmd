@@ -1,0 +1,142 @@
+---
+title: '113034008 凃智中 HW2 '
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+## 班上不同性別對音樂類型的偏好選擇
+
+### 一、分析動機
+由於本人對音樂十分有熱忱，剛好在上學期的通識課又有接觸到且我也十分關注有關台灣人對音樂喜好的議題，就想藉由本此數據加以延伸探討不同性別對不同音樂類型的好。
+
+### 二、分析目的
+1. 探討喜歡各音樂類型的人數比較差異
+2. 探討不同性別喜歡的音樂類型
+3. 探討喜歡各音樂類型間的相關性
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+ 
+```{r}
+setwd("C:\\Users\\E2546\\OneDrive\\Desktop\\RL\\hw2")
+dat1 = read.csv("survey_data_2025.csv")
+View(dat1)
+```
+### 三、各類圖表與其解釋
+整理了班上的性別比例、不同音樂類型喜歡的人數、不同性別喜歡的音樂類型以及各音樂類型間的相關係數。
+
+#### 圖一、性別佔班上比例
+
+```{r}
+gender_counts <- table(dat1$Gender)
+gender_percentages <- round(gender_counts / sum(gender_counts) * 100, 1)
+labels <- paste(names(gender_counts), gender_percentages, "%", sep = " ")
+
+par(pin = c(4.5, 2))
+pie(gender_counts, labels = labels, col = c("pink", "DeepSkyBlue"),
+    main = "班上性別比例",  cex = 1.5, init.angle = 90)
+```
+
+由上述圓餅圖可以知道，班上男女比例接近，但男生人數仍多於女生人數。
+
+#### 圖二、不同音樂類型喜歡的人數
+
+```{r}
+music_columns <- c( "JazzAndBlues", "Folk", "Pop", "Rock", "Dance", "Rap")
+music_table = data.frame(Classical = table(dat1$Gender, dat1[, c("Music_Type_Classical")])[,2])
+for (i in music_columns) {
+  column_data <- table(dat1$Gender, dat1[[paste0("Music_Type_", i)]])[,2]
+  music_table <- cbind(music_table, setNames(data.frame(column_data), i))  # 正确设置列名
+}
+music_matrix <- as.matrix(music_table)
+
+total_counts <- colSums(music_matrix)
+sorted_indices <- order(total_counts, decreasing = TRUE)
+sorted_music_matrix <- music_matrix[, sorted_indices]
+
+par(pin = c(4.5, 2))
+barplot(sorted_music_matrix, beside = FALSE, col = c("Pink", "DeepSkyBlue"), 
+        legend.text = TRUE, args.legend = list(x = "topright"),
+        main = "不同音樂類型喜歡的人數", xlab = "音樂類型", ylab = "人數", cex.names = 0.55)
+```
+
+由上圖可知，流行音樂是班上最多人喜歡的音樂，古典樂和藍調爵士並列第二，再來是饒舌、搖滾、舞曲，最後一名則是民俗音樂。
+
+#### 圖三、不同性別喜歡的音樂類型
+```{r}
+mosaicplot(t(music_matrix), color = c("pink", "deepskyblue"), main = "不同性別喜歡的音樂類型", xlab = "音樂類型", ylab = "性別")
+```
+
+由上圖這張馬賽克圖中可以看到，相較於男性同學有更多女性同學會聆聽民俗音樂、流行樂、搖滾樂與舞曲;而男性同學較更偏好於古典、藍調爵士與饒舌。
+
+```{r}
+install.packages("pheatmap", repos = "https://cloud.r-project.org/")
+library(pheatmap)
+```
+
+#### 圖四、音樂類型間的相關性
+
+```{r}
+
+music_table <- dat1[, c("Music_Type_Classical", "Music_Type_JazzAndBlues", "Music_Type_Folk", 
+                            "Music_Type_Pop", "Music_Type_Rock", "Music_Type_Dance", "Music_Type_Rap")]
+original_names <- colnames(music_table)
+new_names <- gsub("Music_Type_", "", original_names)
+colnames(music_table) <- new_names
+
+corr_matrix <- cor(music_table)
+par(pin = c(4.5, 2.5))
+pheatmap(corr_matrix, display_numbers = TRUE, color = colorRampPalette(c("DeepSkyBlue", "whitesmoke", "Pink"))(50), border_color = NA,
+                main = "各音樂間的相關性", cluster_rows = FALSE, cluster_cols = FALSE, legend = TRUE, angle_col = 0)
+```
+
+由上述熱力圖可以看出各個音樂類型間的相關係數，再根據皮爾森相關係數對相關係數數值大小的解釋只有搖滾與藍調爵士、搖滾與民俗音樂以及饒舌與藍調爵士有到中度相關，其他的皆是低度相關。
+
+
+### 四、與文策院調查數據之比較
+根據文策院於2023年公布的《跨域文壞內容閱聽調查》，如下圖：
+```{r}
+knitr::include_graphics("C:\\Users\\E2546\\Downloads\\螢幕擷取畫面 2025-03-05 003836.png")
+```
+
+#### 流行音樂的高佔比
+不論是在文策院的調查抑或是班上的調查，流行音樂都有非常高的占比，且都領先其他音樂很多。
+
+#### 穩定的趨勢
+本班的調查不論是嘻哈、爵士藍調、搖滾、舞曲、古典樂都與文策院的調查相似，都分布差不多的值且不高。
+
+#### 民俗音樂墊底
+民俗音樂在文策院的統計中包含傳統民謠、演歌以及鄉村、民謠的範疇，但或許在調查者的認知中，民俗音樂會讓他們直接聯想到如四季紅、港邊惜別這類的"傳統民謠"，進而導致民俗音樂墊底。
+
+### 五、音樂間關聯性的解釋
+
+#### 搖滾樂與藍調爵士及民俗音樂的關聯性解釋
+
+各類型間的音樂都有能在一定程度上兼容的特點，被市場買單的音樂類型則會存活，而早在1960年末期，就有出現所謂的藍調搖滾(Blue Rock)。以藍調音樂作為基礎並融合搖滾樂的特性誕生的音樂類型，代表樂團有知名頂頂的齊柏林飛船、滾石樂團等。同時期也誕生了民俗搖滾樂，代表樂團如披頭四樂團。
+而到了1970年，另一種搖滾派別，前衛搖滾也逐漸吸收剛結束爵士黃金時代的歐洲爵士樂，代表樂團有深紅之王樂團等。
+由上述歷史事件可以知道有部分派系的搖滾樂仍有融合藍調以及爵士或是民俗的特性，其中不乏傳奇的樂團，對後世搖滾樂影響甚大，推測其會導致兩者音樂類型的客群產生重疊，故搖滾樂會與這幾種產生中度相關性。
+
+#### 藍調爵士與饒舌的關聯性解釋
+
+與搖滾樂類似，這些音樂類別間產生了融合，且三者皆起源於黑人文化，也有所謂的爵士嘻哈且藍調音樂本身就很適合搭配饒舌。現在的嘻哈聽眾也很常同時聆聽這些音樂類型，故彼此間產生中度影響。
+
+#### 流行音樂與其他音樂類型
+
+依照音樂類型本身會兼容的道理，照理說流行音樂應該同時包容了所有元素，但卻與所有音樂類型都成低度相關。KKBOX的總經理葉展均曾經在訪談時，根據數據提出台灣音樂市場結構上小眾音樂聽眾變得更加黏著，產生一部分的華語廳眾變得幾乎不聽華語流行音樂，轉而是聆聽嘻哈、搖滾、獨立樂團。但這並沒有考慮K-POP及J-POP，相較於20年前，華語歌曲點播比例下降四成但韓國流行音樂則成長兩倍。基於台灣的小眾音樂聽眾更稠密加上韓流的席捲，造成兩種分群，使得流行音樂與其他音樂類型成低度相關。
+
+### 六、分析結果
+1. 本班對於音樂類型偏好的調查結果與文策對台灣人的抽樣調查十分相似，流行音樂最多、民謠墊底，其他平均排列在中間。
+2. 在音樂的選擇上男女各有所好，女性同學較偏好民謠、搖滾及舞曲，而男性同學較喜歡饒舌、藍調爵士。
+3. 音樂之間相容的特性促使有些音樂類型間呈現中度相關性。然而，流行音樂雖然兼容所有音樂類型卻因台灣聽眾市場的結構使得與所有音樂類型成低度相關。
+
+### 七、個人碎碎念小結語
+本次作業原本是想探討班上不同性別對音樂類型的選擇會有甚麼差別，但作起來感到很零散，感覺圖表間的關聯性不夠強烈。研究資料除了文策院的《跨域文壞內容閱聽調查》外，大多都是從音樂愛好者部落格或是影音內容，不夠正式故不附上。
+程式碼的部分也查了很多網路資料，例如：分群、放png檔、甚至是轉成矩陣，查找資料的過程中也令我覺得多年來對於程式語言地訓練是有意義的，很多東西都大同小異，令我感到非常親切。
+至於此篇作業的格式打成這樣一來是因為本人很習慣這樣分析資料，二來是想看看R Markdown 轉html功能的效果如何。但這項作業對我來說是真的很好玩，真的沒有後悔跳級來修這堂課。
+
+
